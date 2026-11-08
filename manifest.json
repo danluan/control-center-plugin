@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "danluan.control-center",
+  "name": "Control Center",
+  "version": "0.1.0",
+  "author": "Daniel Luan",
+  "license": "MIT",
+  "description": "Centro de Controle unificado: rede, bluetooth, som, brilho, mídia, VPN e dispositivos em um só painel.",
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Control Center",
+    "description": "Pílula de status que abre o Centro de Controle no estilo Windows 11.",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

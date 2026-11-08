@@ -1,0 +1,145 @@
+#!/usr/bin/env python3
+"""Apply or remove the danluan.control-center integration in shell.json.
+
+    integrate install [--keep-widgets]   put the pill on the bar, migrate the
+                                         NetExtender profiles, and take the
+                                         absorbed widgets off the bar
+    integrate uninstall                  put those widgets back and remove the
+                                         pill (its settings are kept in a
+                                         backup)
+
+Idempotent. Every run that changes shell.json first copies it to
+shell.json.bak.control-center-<timestamp>.
+"""
+from __future__ import annotations
+
+import json
+import shutil
+import sys
+import time
+from pathlib import Path
+
+SHELL_JSON = Path.home() / ".config/omarchy/shell.json"
+ID = "danluan.control-center"
+
+# Widgets whose job the Control Center takes over, in their original order.
+ABSORBED = [
+    "omarchy.keyboard-layout",
+    "omarchy.weather",
+    "local.midea-ecomaster",
+    "danluan.netextender",
+    "local.galaxy-buds",
+    "omarchy.bluetooth",
+    "omarchy.network",
+    "omarchy.audio",
+    "omarchy.power",
+    "omarchy.monitor",
+]
+# Stale entries for plugins that no longer exist on disk.
+DEAD = ["local.netextender", "danluan.dohome-strip"]
+# The pill goes right before the first of these that is on the bar.
+ANCHORS = ["omarchy.elsewhen", "jankeesvw.notification-center", "omarchy.clock"]
+
+
+def load() -> dict:
+    return json.loads(SHELL_JSON.read_text(encoding="utf-8"))
+
+
+def save(config: dict) -> None:
+    backup = SHELL_JSON.with_name(f"shell.json.bak.control-center-{int(time.time() * 1000)}")
+    shutil.copy2(SHELL_JSON, backup)
+    SHELL_JSON.write_text(json.dumps(config, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(f"shell.json updated (backup: {backup.name})")
+
+
+def sections(config: dict) -> dict:
+    return config.setdefault("bar", {}).setdefault("layout", {})
+
+
+def find(config: dict, widget_id: str):
+    for name, entries in sections(config).items():
+        for entry in entries or []:
+            if isinstance(entry, dict) and entry.get("id") == widget_id:
+                return name, entry
+    return None, None
+
+
+def install(keep_widgets: bool) -> None:
+    config = load()
+    before = json.dumps(config, sort_keys=True)
+    layout = sections(config)
+    right = layout.setdefault("right", [])
+
+    _, entry = find(config, ID)
+    if entry is None:
+        entry = {"id": ID}
+        index = len(right)
+        for anchor in ANCHORS:
+            positions = [i for i, e in enumerate(right) if isinstance(e, dict) and e.get("id") == anchor]
+            if positions:
+                index = positions[0]
+                break
+        right.insert(index, entry)
+
+    # Keep the NetExtender profiles: the embedded VPN panel reads them here.
+    _, vpn = find(config, "danluan.netextender")
+    if vpn is not None and "vpn" not in entry:
+        entry["vpn"] = {k: v for k, v in vpn.items() if k != "id"}
+
+    if not keep_widgets:
+        drop = set(ABSORBED) | set(DEAD)
+        for name in list(layout):
+            layout[name] = [e for e in layout[name] or [] if not (isinstance(e, dict) and e.get("id") in drop)]
+
+    if json.dumps(config, sort_keys=True) != before:
+        save(config)
+    else:
+        print("shell.json already integrated")
+
+
+def uninstall() -> None:
+    config = load()
+    before = json.dumps(config, sort_keys=True)
+    layout = sections(config)
+    right = layout.setdefault("right", [])
+
+    _, entry = find(config, ID)
+    vpn = (entry or {}).get("vpn")
+    index = next((i for i, e in enumerate(right) if isinstance(e, dict) and e.get("id") == ID), len(right))
+
+    restored = []
+    for widget_id in ABSORBED:
+        if find(config, widget_id)[1] is not None:
+            continue
+        new_entry = {"id": widget_id}
+        if widget_id == "danluan.netextender" and isinstance(vpn, dict):
+            new_entry.update(vpn)
+        restored.append(new_entry)
+    right[index:index] = restored
+
+    for name in list(layout):
+        layout[name] = [e for e in layout[name] or [] if not (isinstance(e, dict) and e.get("id") == ID)]
+
+    if json.dumps(config, sort_keys=True) != before:
+        save(config)
+    else:
+        print("shell.json has no Control Center integration")
+
+
+def main() -> int:
+    args = sys.argv[1:]
+    if not args or args[0] not in ("install", "uninstall"):
+        print(__doc__.strip(), file=sys.stderr)
+        return 2
+    if not SHELL_JSON.exists():
+        print(f"{SHELL_JSON} not found", file=sys.stderr)
+        return 1
+    if args[0] == "install":
+        install("--keep-widgets" in args[1:])
+    else:
+        uninstall()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
